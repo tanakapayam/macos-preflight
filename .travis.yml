@@ -1,0 +1,10 @@
+---
+os: osx
+before_install:
+  - brew update
+  - brew install bash git make node perl python2 ruby shellcheck || true
+  - npm install -g semver
+language: bash
+script:
+  - shellcheck macos-preflight
+  - ./macos-preflight

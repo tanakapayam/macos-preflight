@@ -1,0 +1,249 @@
+#!/usr/bin/env bash
+# BASH-3-compliant script
+#
+# To ensure that DevOps tools can run successfully, this script
+# runs a preflight to check:
+#
+# - all package managers, {gem, npm, pip}, are installed
+# - all version-checking tools, {semver, perl}, are installed
+# - the installed packages satisfy minimum versioning
+
+
+set -o errexit
+set -o nounset
+set -o pipefail
+
+trap '{ [ $? -gt 0 ] && printf "\nFAIL: Please rerun this script after fixing the issue\n"; }' EXIT
+
+# Style
+if [ -t 1 ]; then
+  RESET="$(tput sgr0)"
+
+  BOLD="$(tput bold)"
+
+  RED="$(tput setaf 1)"
+  GREEN="$(tput setaf 2)"
+  YELLOW="$(tput setaf 3)"
+  POWDER_BLUE="$(tput setaf 153)"
+  BLUE="$(tput setaf 4)"
+
+  BLUE="$POWDER_BLUE"
+else
+  RESET=
+
+  BOLD=
+
+  RED=
+  GREEN=
+  YELLOW=
+  POWDER_BLUE=
+  BLUE=
+fi
+
+declare -r RESET
+declare -r BOLD
+declare -r RED
+declare -r GREEN
+declare -r YELLOW
+declare -r POWDER_BLUE
+declare -r BLUE
+
+echo -n "$RESET"
+
+# OS X
+if [[ $(uname -s) == 'Darwin' ]]; then
+  OS='darwin'
+  FPM='brew'
+  FPM_INSTALL='install'
+else
+  echo "FATAL: not tested"
+  exit 1
+fi
+
+declare -r OS
+declare -r FPM
+declare -r FPM_INSTALL
+
+PACKAGE_MANAGERS="${FPM} gem npm pip"
+PACKAGES="bash git gmake"
+MIN_VERSION_BASH='>=4.3'
+MIN_VERSION_GIT='>=2.7'
+MIN_VERSION_MAKE='>=4.1'
+MIN_VERSION_PERL='>=5.20'
+MIN_VERSION_SEMVER='>=5.5'
+
+declare -r MIN_VERSION_BASH
+declare -r MIN_VERSION_GIT
+declare -r MIN_VERSION_MAKE
+declare -r MIN_VERSION_PERL
+declare -r MIN_VERSION_SEMVER
+declare -r PACKAGE_MANAGERS
+declare -r PACKAGES
+
+
+packageManagers() {
+  local bail=
+
+  printf '%s\n\n' "${BOLD}## Package Managers${RESET}"
+
+  for pm in $PACKAGE_MANAGERS; do
+    echo -n "* ${BOLD}${BLUE}$pm${RESET}: "
+    if $pm --version &>/dev/null; then
+      echo "found"
+    else
+      echo "${BOLD}${RED}not found${RESET} -- ${YELLOW}install it${RESET}"
+      bail=true
+    fi
+    case $pm in
+    gem)
+      if ! touch "$(gem env gemdir)" &>/dev/null; then
+        echo "  ${BOLD}${RED}gem env gemdir${RESET}, $(gem env gemdir), needs to be writeable"
+        echo "  consider '$FPM $FPM_INSTALL ruby'"
+        bail=true
+      fi
+      ;;
+    pip)
+      if ! touch "$(pip show -f pip | awk '/^Location: /{print $2}')" &>/dev/null; then
+        echo "  ${BOLD}${RED}pip show -f pip | awk '/^Location: /{print \$2}'${RESET}, $(pip show -f pip | awk '/^Location: /{print $2}'), needs to be writeable"
+        echo "  consider '$FPM $FPM_INSTALL python2' or '$FPM $FPM_INSTALL pypy'"
+        bail=true
+      fi
+      ;;
+    esac
+  done
+
+  [[ -n $bail ]] && exit 1
+  printf '\n\n'
+}
+declare -fr packageManagers
+
+
+versionCheckingTools() {
+  printf '%s\n\n' "${BOLD}## Version-Checking Tools${RESET}"
+
+  echo -n "* ${BOLD}${BLUE}semver${RESET}: "
+  if type semver &>/dev/null; then
+    echo "found"
+  else
+    echo "${BOLD}${RED}not found${RESET} -- ${YELLOW}npm install -g semver${RESET}"
+    exit 1
+  fi
+
+  echo -n "   * ${GREEN}"
+  if ! semver -c "$(semver | head -1)" -r "$MIN_VERSION_SEMVER"; then
+    echo "${BOLD}${RED}untested version${RESET} -- ${YELLOW}npm install -g semver${RESET}"
+    exit 2
+  fi
+  echo -n "${RESET}"
+
+  echo -n "* ${BOLD}${BLUE}perl${RESET}: "
+  if type perl &>/dev/null; then
+    echo "found"
+  else
+    echo "${BOLD}${RED}not found${RESET} -- ${YELLOW}${FPM} ${FPM_INSTALL} perl${RESET}"
+    exit 1
+  fi
+
+  echo -n "   * ${GREEN}"
+  if ! semver -c "$(perl --version | grep -Ewo '(v[0-9.]+)')" -r "$MIN_VERSION_PERL"; then
+    echo "${BOLD}${RED}untested version${RESET} -- ${YELLOW}${FPM} ${FPM_INSTALL} perl${RESET}"
+    exit 2
+  fi
+  echo -n "${RESET}"
+
+  printf '\n\n'
+}
+declare -fr versionCheckingTools
+
+
+packages() {
+  local bail=
+
+  printf '%s\n\n' "${BOLD}## Packages${RESET}"
+
+  for pkg in $PACKAGES; do
+    echo -n "* ${BOLD}${BLUE}$pkg${RESET}: "
+
+    if type "$pkg" >/dev/null 2>&1; then
+      echo "found"
+    else
+      echo -n "${BOLD}${RED}not found${RESET} -- "
+      case $pkg in
+      bash)
+        echo "${YELLOW}${FPM} ${FPM_INSTALL} ${pkg}${RESET}"
+        ;;
+      git)
+        if [[ $OS == 'darwin' ]]; then
+          echo "${YELLOW}${FPM} ${FPM_INSTALL} ${pkg}${RESET}"
+        else
+          echo "Not needed for $OS"
+          continue
+        fi
+        ;;
+      gmake)
+        echo "${YELLOW}${FPM} ${FPM_INSTALL} make${RESET}"
+        ;;
+      *)
+        echo "${YELLOW}please install ${pkg}${RESET}"
+        ;;
+      esac
+      bail=true
+    fi
+  done
+
+  [[ -n $bail ]] && exit 1
+  printf '\n\n'
+}
+declare -fr packages
+
+
+versions() {
+  local bail=
+  local -r version_bash="$BASH_VERSION"
+  local -r version_git="$(git --version 2>&1)"
+  local -r version_make="$(gmake --version 2>&1 | head -1)"
+
+  printf '%s\n\n' "${BOLD}## Versions${RESET}"
+
+  for pkg in $PACKAGES; do
+    echo -n "* ${BOLD}${BLUE}$pkg${RESET}: "
+
+    case $pkg in
+    bash)
+      if ! semver -c "$version_bash" -r "$MIN_VERSION_BASH"; then
+        [[ $OS == 'darwin' ]] \
+          && echo "${BOLD}${RED}untested version${RESET} -- ${YELLOW}${FPM} install ${pkg}${RESET}" \
+          || echo "${BOLD}${RED}untested version${RESET} -- ${YELLOW}${FPM} ${FPM_INSTALL} ${pkg}${RESET}"
+        bail=true
+      fi
+      ;;
+    git)
+      if ! semver -c "$version_git" -r "$MIN_VERSION_GIT"; then
+        echo "${BOLD}${RED}untested version${RESET} -- ${YELLOW}${FPM} ${FPM_INSTALL} ${pkg}${RESET}"
+        [[ $OS == 'darwin' ]] \
+        && bail=true
+      fi
+      ;;
+    gmake)
+      if ! semver -c "$version_make" -r "$MIN_VERSION_MAKE"; then
+        echo "${BOLD}${RED}untested version${RESET} -- ${YELLOW}${FPM} ${FPM_INSTALL} make${RESET}"
+        bail=true
+      fi
+      ;;
+    esac
+  done
+
+  [[ -n $bail ]] && exit 2
+  printf '\n\n'
+}
+declare -fr versions
+
+
+# main
+packageManagers
+versionCheckingTools
+packages
+versions
+
+echo "${BOLD}${GREEN}Success!${RESET}"
+exit 0
